@@ -1,0 +1,48 @@
+{
+  "name": "periodik",
+  "productName": "Periodik",
+  "version": "1.1.0",
+  "description": "Apprends le tableau périodique par cœur en jouant : défis chrono, multijoueur local, rangs et skins.",
+  "private": true,
+  "license": "UNLICENSED",
+  "author": { "name": "Periodik", "email": "contact@periodik.example" },
+  "main": "electron/main.js",
+  "scripts": {
+    "test": "node tests/core.test.js",
+    "test:ui": "python3 tests/ui.test.py",
+    "icons": "python3 tools/make-icons.py",
+
+    "web": "npx --yes serve www",
+
+    "desktop": "electron .",
+    "dist:win": "electron-builder --win --publish never",
+    "dist:linux": "electron-builder --linux --publish never",
+
+    "android:init": "cap add android && capacitor-assets generate --android --iconBackgroundColor \"#0f0e24\" --splashBackgroundColor \"#0f0e24\"",
+    "android:apk": "cap sync android && cd android && ./gradlew assembleDebug",
+    "android:open": "cap sync android && cap open android",
+
+    "ios:init": "cap add ios && capacitor-assets generate --ios --iconBackgroundColor \"#0f0e24\" --splashBackgroundColor \"#0f0e24\"",
+    "ios:open": "cap sync ios && cap open ios"
+  },
+  "devDependencies": {
+    "@capacitor/android": "^7.0.0",
+    "@capacitor/assets": "^3.0.5",
+    "@capacitor/cli": "^7.0.0",
+    "@capacitor/core": "^7.0.0",
+    "@capacitor/ios": "^7.0.0",
+    "electron": "^33.0.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.periodik.app",
+    "productName": "Periodik",
+    "copyright": "Periodik",
+    "directories": { "output": "dist", "buildResources": "resources" },
+    "files": ["electron/**/*", "www/**/*", "package.json"],
+    "asar": true,
+    "win": { "target": [{ "target": "nsis", "arch": ["x64"] }, { "target": "portable", "arch": ["x64"] }] },
+    "nsis": { "oneClick": false, "allowToChangeInstallationDirectory": true },
+    "linux": { "target": ["AppImage", "deb"], "category": "Game", "maintainer": "Periodik <contact@periodik.example>" }
+  }
+}

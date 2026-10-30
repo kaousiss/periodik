@@ -1,0 +1,173 @@
+# Periodik — un seul fichier qui fabrique TOUT : site web, APK Android, Windows, Linux, iPhone.
+#
+# Comment l'utiliser :
+#   1. Mets ce dossier sur GitHub (dépôt public ou privé).
+#   2. Onglet « Actions » → « Construire Periodik » → « Run workflow ».
+#   3. Récupère les fichiers dans « Artifacts » (ou dans « Releases » si tu publies un tag : git tag v1.1.0 && git push --tags).
+#
+# Le site web se publie tout seul sur GitHub Pages à chaque push sur main
+# (Réglages du dépôt → Pages → Source : « GitHub Actions »).
+name: Construire Periodik
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: periodik-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: '22'
+
+jobs:
+  # ---------------------------------------------------------------- tests de la logique du jeu
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '${{ env.NODE_VERSION }}' }
+      - run: node tests/core.test.js
+
+  # ---------------------------------------------------------------- site web (GitHub Pages)
+  web:
+    needs: test
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with: { path: www }
+      - id: deploy
+        uses: actions/deploy-pages@v4
+
+  # ---------------------------------------------------------------- Android : APK
+  android:
+    needs: test
+    runs-on: ubuntu-latest
+    env:
+      # Pour un APK signé (obligatoire pour le Play Store), ajoute ces 4 secrets dans Réglages → Secrets :
+      # ANDROID_KEYSTORE_BASE64, ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS, ANDROID_KEY_PASSWORD
+      HAS_KEYSTORE: ${{ secrets.ANDROID_KEYSTORE_BASE64 != '' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '${{ env.NODE_VERSION }}' }
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: '21' }
+      - run: npm install
+      - name: Créer le projet Android et ses icônes
+        run: |
+          npx cap add android
+          npx capacitor-assets generate --android --iconBackgroundColor "#0f0e24" --splashBackgroundColor "#0f0e24"
+          npx cap sync android
+      - name: APK de test (installable directement sur un téléphone)
+        run: cd android && chmod +x gradlew && ./gradlew assembleDebug
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Periodik-Android-test.apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+      - name: APK signé (si les secrets existent)
+        if: env.HAS_KEYSTORE == 'true'
+        env:
+          KS_PASS: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_PASS: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        run: |
+          echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 -d > release.jks
+          (cd android && ./gradlew assembleRelease bundleRelease)
+          BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
+          "$BT/zipalign" -p 4 android/app/build/outputs/apk/release/app-release-unsigned.apk aligned.apk
+          "$BT/apksigner" sign --ks release.jks --ks-pass env:KS_PASS --key-pass env:KEY_PASS --ks-key-alias "$KEY_ALIAS" --out Periodik-Android.apk aligned.apk
+          cp android/app/build/outputs/bundle/release/app-release.aab Periodik-Android-unsigned.aab
+      - name: Publier l'APK signé
+        if: env.HAS_KEYSTORE == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: Periodik-Android-signe
+          path: |
+            Periodik-Android.apk
+            Periodik-Android-unsigned.aab
+
+  # ---------------------------------------------------------------- Windows et Linux
+  desktop:
+    needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '${{ env.NODE_VERSION }}' }
+      - run: npm install
+      - name: "Windows (.exe, installateur et version portable)"
+        if: runner.os == 'Windows'
+        run: npx electron-builder --win --publish never
+      - name: Linux (.AppImage + .deb)
+        if: runner.os == 'Linux'
+        run: npx electron-builder --linux --publish never
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Periodik-${{ runner.os }}
+          path: |
+            dist/*.exe
+            dist/*.AppImage
+            dist/*.deb
+
+  # ---------------------------------------------------------------- iPhone
+  # Sans compte Apple Developer, on obtient seulement une version « simulateur » (preuve que le projet compile).
+  # Pour un vrai iPhone ou l'App Store : voir README, section « iPhone ».
+  ios:
+    needs: test
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '${{ env.NODE_VERSION }}' }
+      - run: npm install
+      - name: Créer le projet iOS et ses icônes
+        run: |
+          npx cap add ios
+          npx capacitor-assets generate --ios --iconBackgroundColor "#0f0e24" --splashBackgroundColor "#0f0e24"
+          npx cap sync ios
+      - name: Compiler (simulateur, sans signature)
+        run: |
+          if [ -d ios/App/App.xcworkspace ]; then TARGET="-workspace ios/App/App.xcworkspace"; else TARGET="-project ios/App/App.xcodeproj"; fi
+          xcodebuild $TARGET -scheme App -configuration Release -sdk iphonesimulator -derivedDataPath build CODE_SIGNING_ALLOWED=NO build
+          ditto -c -k --keepParent build/Build/Products/Release-iphonesimulator/App.app Periodik-iOS-simulateur.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Periodik-iOS-simulateur
+          path: Periodik-iOS-simulateur.zip
+
+  # ---------------------------------------------------------------- Release GitHub (quand tu publies un tag v*)
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [android, desktop]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { path: out }
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            out/**/*.apk
+            out/**/*.exe
+            out/**/*.AppImage
+            out/**/*.deb
+            out/**/*.aab
+          generate_release_notes: true

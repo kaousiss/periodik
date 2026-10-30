@@ -1,0 +1,14 @@
+{
+  "appId": "com.periodik.app",
+  "appName": "Periodik",
+  "webDir": "www",
+  "backgroundColor": "#0f0e24",
+  "android": {
+    "backgroundColor": "#0f0e24",
+    "allowMixedContent": false
+  },
+  "ios": {
+    "backgroundColor": "#0f0e24",
+    "contentInset": "never"
+  }
+}
